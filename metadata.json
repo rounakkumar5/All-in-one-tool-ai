@@ -1,0 +1,6 @@
+{
+  "name": "OmniTool AI",
+  "description": "An all-in-one AI-powered multi-utility toolkit, featuring smart calculators, notebook, decision tools, and over 15 essential daily assistants.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
