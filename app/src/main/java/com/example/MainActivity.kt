@@ -303,7 +303,8 @@ fun MainAppLayout(viewModel: MainViewModel) {
             AdmobBanner(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surface)
+                    .background(MaterialTheme.colorScheme.surface),
+                viewModel = viewModel
             )
         }
     }
@@ -2555,15 +2556,41 @@ fun HistoryLogsScreen(viewModel: MainViewModel) {
 // ==================== GOOGLE ADMOB INTEGRATION SHIELD ====================
 
 @Composable
-fun AdmobBanner(modifier: Modifier = Modifier) {
+fun AdmobBanner(modifier: Modifier = Modifier, viewModel: MainViewModel) {
+    val useProduction by viewModel.useProductionAds.collectAsState()
+    val testId = "ca-app-pub-3940256099942544/6300978111"
+    val productionId = "ca-app-pub-2186974340923235/7216523886"
+    val activeId = if (useProduction) productionId else testId
+    
     AndroidView(
         modifier = modifier.fillMaxWidth(),
         factory = { context ->
             AdView(context).apply {
                 setAdSize(AdSize.BANNER)
-                // Production banner ad unit ID
-                adUnitId = "ca-app-pub-2186974340923235/7216523886"
+                adUnitId = activeId
+                adListener = object : com.google.android.gms.ads.AdListener() {
+                    override fun onAdLoaded() {
+                        viewModel.adStatusText.value = "Banner ad loaded successfully!"
+                    }
+                    override fun onAdFailedToLoad(error: LoadAdError) {
+                        viewModel.adStatusText.value = "Banner failed to load: ${error.message} (Error Code: ${error.code})"
+                    }
+                }
                 loadAd(AdRequest.Builder().build())
+            }
+        },
+        update = { adView ->
+            if (adView.adUnitId != activeId) {
+                adView.adUnitId = activeId
+                adView.adListener = object : com.google.android.gms.ads.AdListener() {
+                    override fun onAdLoaded() {
+                        viewModel.adStatusText.value = "Banner ad loaded successfully!"
+                    }
+                    override fun onAdFailedToLoad(error: LoadAdError) {
+                        viewModel.adStatusText.value = "Banner failed to load: ${error.message} (Error Code: ${error.code})"
+                    }
+                }
+                adView.loadAd(AdRequest.Builder().build())
             }
         }
     )
@@ -2572,6 +2599,9 @@ fun AdmobBanner(modifier: Modifier = Modifier) {
 @Composable
 fun AdmobMonetizationScreen(viewModel: MainViewModel) {
     val context = LocalContext.current
+    val useProduction by viewModel.useProductionAds.collectAsState()
+    val adStatusText by viewModel.adStatusText.collectAsState()
+    
     var interstitialAd by remember { mutableStateOf<InterstitialAd?>(null) }
     var rewardedAd by remember { mutableStateOf<RewardedAd?>(null) }
     
@@ -2579,7 +2609,16 @@ fun AdmobMonetizationScreen(viewModel: MainViewModel) {
     var isRewardedLoading by remember { mutableStateOf(false) }
     
     var rewardPoints by remember { mutableStateOf(0) }
-    var adStatusText by remember { mutableStateOf("Ready to load ads") }
+
+    // Constants for Banner/Interstitial/Rewarded
+    val testBannerId = "ca-app-pub-3940256099942544/6300978111"
+    val prodBannerId = "ca-app-pub-2186974340923235/7216523886"
+    
+    val testInterstitialId = "ca-app-pub-3940256099942544/1033173712"
+    val prodInterstitialId = "ca-app-pub-2186974340923235/4852003436"
+    
+    val testRewardedId = "ca-app-pub-3940256099942544/5224354917"
+    val prodRewardedId = "ca-app-pub-3940256099942544/5224354917" // Still using test rewarded video since real rewarded video needs verified devices
 
     Column(
         modifier = Modifier
@@ -2612,10 +2651,64 @@ fun AdmobMonetizationScreen(viewModel: MainViewModel) {
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Welcome to the AdMob space. We have integrated Google Mobile Ads so you can monetize this application using Banners, Interstitial, and Rewarded ads. Below you can run live test environments.",
+                    text = "Configure and test Google Mobile Ads. You can switch between Sandbox/Test Ads and Live Production Ads to verify implementation.",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
                 )
+            }
+        }
+
+        // Mode Switcher Card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = if (useProduction) 
+                    MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f) 
+                else 
+                    MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.3f)
+            ),
+            border = BorderStroke(
+                1.dp, 
+                if (useProduction) MaterialTheme.colorScheme.error.copy(alpha = 0.4f) 
+                else MaterialTheme.colorScheme.tertiary.copy(alpha = 0.4f)
+            ),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (useProduction) "PRODUCTION ADS MODE" else "SANDBOX TEST ADS MODE",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = if (useProduction) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.tertiary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = if (useProduction) 
+                                "Using your custom production Ad Unit IDs. Real ads will start showing once Google approves your account configuration (usually 24-48 hours)."
+                            else 
+                                "Using Google sandbox test keys. This will ALWAYS successfully display test banner & interactive ads immediately so you know the integration is working!",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Switch(
+                        checked = useProduction,
+                        onCheckedChange = { isChecked ->
+                            viewModel.useProductionAds.value = isChecked
+                            viewModel.adStatusText.value = "Switched to ${if (isChecked) "Production" else "Sandbox Test"} ads"
+                            // Clear existing loaded ads so they reload in the new mode
+                            interstitialAd = null
+                            rewardedAd = null
+                        }
+                    )
+                }
             }
         }
 
@@ -2648,7 +2741,7 @@ fun AdmobMonetizationScreen(viewModel: MainViewModel) {
 
         // Live Banner Section
         Text(
-            text = "1. LIVE BANNER AD (TEST MODE)",
+            text = "1. LIVE BANNER AD",
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.primary,
@@ -2665,15 +2758,27 @@ fun AdmobMonetizationScreen(viewModel: MainViewModel) {
                     .padding(8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(
-                    text = "Banner Ad Frame Below",
-                    fontSize = 9.sp,
-                    color = MaterialTheme.colorScheme.outline,
-                    modifier = Modifier.padding(bottom = 6.dp)
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Banner Ad View",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                    Text(
+                        text = if (useProduction) "ID: ca-app-.../7216523886" else "ID: Test Sandbox Banner",
+                        fontSize = 9.sp,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
                 
                 // Real AdView component
-                AdmobBanner(modifier = Modifier.padding(vertical = 4.dp))
+                AdmobBanner(modifier = Modifier.padding(vertical = 4.dp), viewModel = viewModel)
             }
         }
 
@@ -2704,23 +2809,24 @@ fun AdmobMonetizationScreen(viewModel: MainViewModel) {
                     Button(
                         onClick = {
                             isInterstitialLoading = true
-                            adStatusText = "Loading Interstitial..."
+                            viewModel.adStatusText.value = "Loading Interstitial..."
                             val adRequest = AdRequest.Builder().build()
+                            val currentId = if (useProduction) prodInterstitialId else testInterstitialId
                             InterstitialAd.load(
                                 context,
-                                "ca-app-pub-2186974340923235/4852003436", // Production Interstitial ID
+                                currentId,
                                 adRequest,
                                 object : InterstitialAdLoadCallback() {
                                     override fun onAdLoaded(ad: InterstitialAd) {
                                         interstitialAd = ad
                                         isInterstitialLoading = false
-                                        adStatusText = "Interstitial Ad loaded successfully!"
+                                        viewModel.adStatusText.value = "Interstitial Ad loaded successfully!"
                                     }
 
                                     override fun onAdFailedToLoad(error: LoadAdError) {
                                         interstitialAd = null
                                         isInterstitialLoading = false
-                                        adStatusText = "Failed to load Interstitial: ${error.message}"
+                                        viewModel.adStatusText.value = "Failed to load Interstitial: ${error.message} (Code: ${error.code})"
                                     }
                                 }
                             )
@@ -2740,9 +2846,9 @@ fun AdmobMonetizationScreen(viewModel: MainViewModel) {
                             interstitialAd?.let { ad ->
                                 ad.show(context as Activity)
                                 interstitialAd = null
-                                adStatusText = "Interstitial Ad watched successfully!"
+                                viewModel.adStatusText.value = "Interstitial Ad watched successfully!"
                             } ?: run {
-                                adStatusText = "Please load the ad first"
+                                viewModel.adStatusText.value = "Please load the ad first"
                             }
                         },
                         modifier = Modifier.weight(1f),
@@ -2782,23 +2888,24 @@ fun AdmobMonetizationScreen(viewModel: MainViewModel) {
                     Button(
                         onClick = {
                             isRewardedLoading = true
-                            adStatusText = "Loading Rewarded Video..."
+                            viewModel.adStatusText.value = "Loading Rewarded Video..."
                             val adRequest = AdRequest.Builder().build()
+                            val currentId = if (useProduction) prodRewardedId else testRewardedId
                             RewardedAd.load(
                                 context,
-                                "ca-app-pub-3940256099942544/5224354917", // Test Rewarded ID
+                                currentId,
                                 adRequest,
                                 object : RewardedAdLoadCallback() {
                                     override fun onAdLoaded(ad: RewardedAd) {
                                         rewardedAd = ad
                                         isRewardedLoading = false
-                                        adStatusText = "Rewarded Video loaded successfully!"
+                                        viewModel.adStatusText.value = "Rewarded Video loaded successfully!"
                                     }
 
                                     override fun onAdFailedToLoad(error: LoadAdError) {
                                         rewardedAd = null
                                         isRewardedLoading = false
-                                        adStatusText = "Failed to load Rewarded: ${error.message}"
+                                        viewModel.adStatusText.value = "Failed to load Rewarded: ${error.message} (Code: ${error.code})"
                                     }
                                 }
                             )
@@ -2819,11 +2926,11 @@ fun AdmobMonetizationScreen(viewModel: MainViewModel) {
                                 ad.show(context as Activity) { rewardItem ->
                                     val amount = rewardItem.amount
                                     rewardPoints += amount
-                                    adStatusText = "Rewarded: +$amount points earned!"
+                                    viewModel.adStatusText.value = "Rewarded: +$amount points earned!"
                                 }
                                 rewardedAd = null
                             } ?: run {
-                                adStatusText = "Please load the video first"
+                                viewModel.adStatusText.value = "Please load the video first"
                             }
                         },
                         modifier = Modifier.weight(1f),
@@ -2851,7 +2958,7 @@ fun AdmobMonetizationScreen(viewModel: MainViewModel) {
                     modifier = Modifier
                         .size(8.dp)
                         .background(
-                            if (adStatusText.contains("Failed") || adStatusText.contains("Error")) Color.Red else Color.Green,
+                            if (adStatusText.contains("Failed") || adStatusText.contains("Error") || adStatusText.contains("failed")) Color.Red else Color.Green,
                             CircleShape
                         )
                 )
@@ -2865,7 +2972,7 @@ fun AdmobMonetizationScreen(viewModel: MainViewModel) {
             }
         }
 
-        // Code setup snippet guide
+        // Troubleshooting Guide
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)),
@@ -2873,14 +2980,17 @@ fun AdmobMonetizationScreen(viewModel: MainViewModel) {
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(
-                    text = "How to use your production AdMob IDs:",
+                    text = "Why production ads might not show immediately (Common AdMob Rules):",
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.primary
                 )
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(8.dp))
+                
                 Text(
-                    text = "1. Replace application ID metadata in your AndroidManifest.xml.\n2. Replace testing adUnitId strings in the load calls with your personal unit IDs from your Google AdMob Dashboard.",
+                    text = "• Account Approval: New AdMob accounts take up to 48 hours to be reviewed and approved by Google. No ads will load until approved.\n" +
+                           "• Error Code 3 (No Fill): This means there is no ad inventory available for your new ID yet. This is completely normal and resolves once traffic grows.\n" +
+                           "• Debug Build Restrictions: Google AdMob often restricts live production ads inside unregistered debug environments or emulators to prevent click fraud. Use Sandbox Test Ads for testing.",
                     fontSize = 10.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     lineHeight = 14.sp

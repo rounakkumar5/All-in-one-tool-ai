@@ -88,6 +88,8 @@ class MainViewModel : ViewModel() {
     // UI Configuration States
     val currentScreen = MutableStateFlow<Screen>(Screen.Dash)
     val searchQuery = MutableStateFlow("")
+    val useProductionAds = MutableStateFlow(false)
+    val adStatusText = MutableStateFlow("Ready to load ads")
 
     // AI & Chat States
     val aiLoading = MutableStateFlow(false)
