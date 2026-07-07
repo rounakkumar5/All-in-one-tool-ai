@@ -44,6 +44,17 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.viewinterop.AndroidView
+import com.google.android.gms.ads.MobileAds
+import com.google.android.gms.ads.AdRequest
+import com.google.android.gms.ads.AdSize
+import com.google.android.gms.ads.AdView
+import com.google.android.gms.ads.interstitial.InterstitialAd
+import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback
+import com.google.android.gms.ads.rewarded.RewardedAd
+import com.google.android.gms.ads.rewarded.RewardedAdLoadCallback
+import com.google.android.gms.ads.LoadAdError
+import android.app.Activity
 import com.example.data.Note
 import com.example.data.Habit
 import com.example.data.Expense
@@ -58,6 +69,10 @@ import java.util.Locale
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // Initialize the Google Mobile Ads SDK
+        MobileAds.initialize(this) {}
+        
         enableEdgeToEdge()
         setContent {
             MyApplicationTheme {
@@ -248,35 +263,48 @@ fun MainAppLayout(viewModel: MainViewModel) {
         },
         contentWindowInsets = WindowInsets.safeDrawing
     ) { paddingValues ->
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.background,
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+        ) {
+            Box(
+                modifier = Modifier
+                    .weight(1.0f)
+                    .fillMaxWidth()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                MaterialTheme.colorScheme.background,
+                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                            )
                         )
                     )
-                )
-        ) {
-            AnimatedContent(
-                targetState = currentScreenState,
-                transitionSpec = {
-                    fadeIn(animationSpec = tween(220)) togetherWith fadeOut(animationSpec = tween(220))
-                },
-                label = "ScreenTransition"
-            ) { targetScreen ->
-                when (targetScreen) {
-                    is Screen.Dash -> DashboardScreen(viewModel)
-                    is Screen.Calculator -> SmartCalculatorScreen(viewModel)
-                    is Screen.Notes -> NotebookScreen(viewModel)
-                    is Screen.Habits -> HabitsTrackerScreen(viewModel)
-                    is Screen.Budget -> BudgetScreen(viewModel)
-                    is Screen.ToolDetail -> ToolDetailDispatcher(targetScreen.toolId, viewModel)
+            ) {
+                AnimatedContent(
+                    targetState = currentScreenState,
+                    transitionSpec = {
+                        fadeIn(animationSpec = tween(220)) togetherWith fadeOut(animationSpec = tween(220))
+                    },
+                    label = "ScreenTransition"
+                ) { targetScreen ->
+                    when (targetScreen) {
+                        is Screen.Dash -> DashboardScreen(viewModel)
+                        is Screen.Calculator -> SmartCalculatorScreen(viewModel)
+                        is Screen.Notes -> NotebookScreen(viewModel)
+                        is Screen.Habits -> HabitsTrackerScreen(viewModel)
+                        is Screen.Budget -> BudgetScreen(viewModel)
+                        is Screen.ToolDetail -> ToolDetailDispatcher(targetScreen.toolId, viewModel)
+                    }
                 }
             }
+            
+            // Persistent AdMob test banner at the bottom of the screens!
+            AdmobBanner(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surface)
+            )
         }
     }
 }
@@ -302,7 +330,8 @@ fun createCatalog(colors: ColorScheme): List<UtilityTool> {
         UtilityTool("stopwatch", "Athletic Stopwatch & Laps", "A perfect interval precision timer with lap offsets", "Convenience", Icons.Default.Timer, false, Color(0xFFFBBF24)),
         UtilityTool("world_clocks", "Global Time Zone Registry", "Map exact hours in Tokyo, London, Singapore and York", "Convenience", Icons.Default.Public, false, Color(0xFFFBBF24)),
         UtilityTool("password_gen", "Cryptographic Pass Key Maker", "Establish complex uncrackable secure passwords", "Convenience", Icons.Default.VpnKey, false, Color(0xFFFBBF24)),
-        UtilityTool("history_log", "Calculation Activity Logs", "Review previous calculations and diagnostic updates", "Convenience", Icons.Default.History, false, Color(0xFFFBBF24))
+        UtilityTool("history_log", "Calculation Activity Logs", "Review previous calculations and diagnostic updates", "Convenience", Icons.Default.History, false, Color(0xFFFBBF24)),
+        UtilityTool("admob_monetization", "AdMob Ad Space", "Configure AdMob banner, load interstitial and rewarded ads", "Convenience", Icons.Default.Campaign, false, Color(0xFFFBBF24))
     )
 }
 
@@ -641,6 +670,7 @@ fun ToolDetailDispatcher(toolId: String, viewModel: MainViewModel) {
         "world_clocks" -> WorldClocksScreen(viewModel)
         "password_gen" -> PasswordGeneratorScreen(viewModel)
         "history_log" -> HistoryLogsScreen(viewModel)
+        "admob_monetization" -> AdmobMonetizationScreen(viewModel)
         else -> {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("This custom tool is currently loading or offline.")
@@ -2521,3 +2551,342 @@ fun HistoryLogsScreen(viewModel: MainViewModel) {
         }
     }
 }
+
+// ==================== GOOGLE ADMOB INTEGRATION SHIELD ====================
+
+@Composable
+fun AdmobBanner(modifier: Modifier = Modifier) {
+    AndroidView(
+        modifier = modifier.fillMaxWidth(),
+        factory = { context ->
+            AdView(context).apply {
+                setAdSize(AdSize.BANNER)
+                // Production banner ad unit ID
+                adUnitId = "ca-app-pub-2186974340923235/7216523886"
+                loadAd(AdRequest.Builder().build())
+            }
+        }
+    )
+}
+
+@Composable
+fun AdmobMonetizationScreen(viewModel: MainViewModel) {
+    val context = LocalContext.current
+    var interstitialAd by remember { mutableStateOf<InterstitialAd?>(null) }
+    var rewardedAd by remember { mutableStateOf<RewardedAd?>(null) }
+    
+    var isInterstitialLoading by remember { mutableStateOf(false) }
+    var isRewardedLoading by remember { mutableStateOf(false) }
+    
+    var rewardPoints by remember { mutableStateOf(0) }
+    var adStatusText by remember { mutableStateOf("Ready to load ads") }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // Welcome Header
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Campaign,
+                        contentDescription = "Monetization Hub",
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(28.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "AdMob Monetization Hub",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Welcome to the AdMob space. We have integrated Google Mobile Ads so you can monetize this application using Banners, Interstitial, and Rewarded ads. Below you can run live test environments.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                )
+            }
+        }
+
+        // Stats Banner
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text("Your Ad Rewards", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f))
+                    Text("$rewardPoints OmniPoints", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                }
+                Box(
+                    modifier = Modifier
+                        .background(MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.1f), CircleShape)
+                        .padding(8.dp)
+                ) {
+                    Icon(Icons.Default.MonetizationOn, "Points", tint = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.size(24.dp))
+                }
+            }
+        }
+
+        // Live Banner Section
+        Text(
+            text = "1. LIVE BANNER AD (TEST MODE)",
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+            letterSpacing = 1.sp
+        )
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "Banner Ad Frame Below",
+                    fontSize = 9.sp,
+                    color = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.padding(bottom = 6.dp)
+                )
+                
+                // Real AdView component
+                AdmobBanner(modifier = Modifier.padding(vertical = 4.dp))
+            }
+        }
+
+        // Interstitial Ad Section
+        Text(
+            text = "2. INTERSTITIAL AD (FULL SCREEN)",
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+            letterSpacing = 1.sp
+        )
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "Interstitial ads are full-screen ads that cover the interface of their host app. Usually shown at natural transition points (e.g. when changing screens or finishing calculations).",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            isInterstitialLoading = true
+                            adStatusText = "Loading Interstitial..."
+                            val adRequest = AdRequest.Builder().build()
+                            InterstitialAd.load(
+                                context,
+                                "ca-app-pub-2186974340923235/4852003436", // Production Interstitial ID
+                                adRequest,
+                                object : InterstitialAdLoadCallback() {
+                                    override fun onAdLoaded(ad: InterstitialAd) {
+                                        interstitialAd = ad
+                                        isInterstitialLoading = false
+                                        adStatusText = "Interstitial Ad loaded successfully!"
+                                    }
+
+                                    override fun onAdFailedToLoad(error: LoadAdError) {
+                                        interstitialAd = null
+                                        isInterstitialLoading = false
+                                        adStatusText = "Failed to load Interstitial: ${error.message}"
+                                    }
+                                }
+                            )
+                        },
+                        modifier = Modifier.weight(1f),
+                        enabled = !isInterstitialLoading && interstitialAd == null
+                    ) {
+                        if (isInterstitialLoading) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                        } else {
+                            Text("1. Load Interstitial", fontSize = 11.sp)
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            interstitialAd?.let { ad ->
+                                ad.show(context as Activity)
+                                interstitialAd = null
+                                adStatusText = "Interstitial Ad watched successfully!"
+                            } ?: run {
+                                adStatusText = "Please load the ad first"
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        enabled = interstitialAd != null,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                    ) {
+                        Text("2. Show Ad", fontSize = 11.sp)
+                    }
+                }
+            }
+        }
+
+        // Rewarded Ad Section
+        Text(
+            text = "3. REWARDED VIDEO AD",
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+            letterSpacing = 1.sp
+        )
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "Rewarded ads reward users with in-app assets or points for interacting with video ads. Watch the full test video to earn +10 OmniPoints!",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            isRewardedLoading = true
+                            adStatusText = "Loading Rewarded Video..."
+                            val adRequest = AdRequest.Builder().build()
+                            RewardedAd.load(
+                                context,
+                                "ca-app-pub-3940256099942544/5224354917", // Test Rewarded ID
+                                adRequest,
+                                object : RewardedAdLoadCallback() {
+                                    override fun onAdLoaded(ad: RewardedAd) {
+                                        rewardedAd = ad
+                                        isRewardedLoading = false
+                                        adStatusText = "Rewarded Video loaded successfully!"
+                                    }
+
+                                    override fun onAdFailedToLoad(error: LoadAdError) {
+                                        rewardedAd = null
+                                        isRewardedLoading = false
+                                        adStatusText = "Failed to load Rewarded: ${error.message}"
+                                    }
+                                }
+                            )
+                        },
+                        modifier = Modifier.weight(1f),
+                        enabled = !isRewardedLoading && rewardedAd == null
+                    ) {
+                        if (isRewardedLoading) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                        } else {
+                            Text("1. Load Video", fontSize = 11.sp)
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            rewardedAd?.let { ad ->
+                                ad.show(context as Activity) { rewardItem ->
+                                    val amount = rewardItem.amount
+                                    rewardPoints += amount
+                                    adStatusText = "Rewarded: +$amount points earned!"
+                                }
+                                rewardedAd = null
+                            } ?: run {
+                                adStatusText = "Please load the video first"
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        enabled = rewardedAd != null,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
+                    ) {
+                        Text("2. Show & Get Reward", fontSize = 11.sp)
+                    }
+                }
+            }
+        }
+
+        // Status bar logs
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.08f))
+        ) {
+            Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .background(
+                            if (adStatusText.contains("Failed") || adStatusText.contains("Error")) Color.Red else Color.Green,
+                            CircleShape
+                        )
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "System Status: $adStatusText",
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        // Code setup snippet guide
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = "How to use your production AdMob IDs:",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "1. Replace application ID metadata in your AndroidManifest.xml.\n2. Replace testing adUnitId strings in the load calls with your personal unit IDs from your Google AdMob Dashboard.",
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 14.sp
+                )
+            }
+        }
+    }
+}
+
